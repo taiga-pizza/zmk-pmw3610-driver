@@ -19,6 +19,10 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(pmw3610, CONFIG_INPUT_LOG_LEVEL);
 
+#define PMW3610_WORK_STACK_SIZE 1024
+#define PMW3610_WORK_PRIORITY 5
+K_THREAD_STACK_DEFINE(pmw3610_work_stack, PMW3610_WORK_STACK_SIZE);
+
 //////// Sensor initialization steps definition //////////
 // init is done in non-blocking manner (i.e., async), a //
 // delayable work is defined for this purpose           //
@@ -724,21 +728,21 @@ static int pmw3610_report_data(const struct device *dev) {
                 activate_automouse_layer();
             }
 #endif
-            input_report_rel(dev, INPUT_REL_X, x, false, K_FOREVER);
-            input_report_rel(dev, INPUT_REL_Y, y, true, K_FOREVER);
+            input_report_rel(dev, INPUT_REL_X, x, false, K_NO_WAIT);
+            input_report_rel(dev, INPUT_REL_Y, y, true, K_NO_WAIT);
         } else {
             data->scroll_delta_x += x;
             data->scroll_delta_y += y;
             if (abs(data->scroll_delta_y) > CONFIG_PMW3610_SCROLL_TICK) {
                 input_report_rel(dev, INPUT_REL_WHEEL,
                                  data->scroll_delta_y > 0 ? PMW3610_SCROLL_Y_NEGATIVE : PMW3610_SCROLL_Y_POSITIVE,
-                                 true, K_FOREVER);
+                                 true, K_NO_WAIT);
                 data->scroll_delta_x = 0;
                 data->scroll_delta_y = 0;
             } else if (abs(data->scroll_delta_x) > CONFIG_PMW3610_SCROLL_TICK) {
                 input_report_rel(dev, INPUT_REL_HWHEEL,
                                  data->scroll_delta_x > 0 ? PMW3610_SCROLL_X_NEGATIVE : PMW3610_SCROLL_X_POSITIVE,
-                                 true, K_FOREVER);
+                                 true, K_NO_WAIT);
                 data->scroll_delta_x = 0;
                 data->scroll_delta_y = 0;
             }
@@ -756,7 +760,7 @@ static void pmw3610_gpio_callback(const struct device *gpiob, struct gpio_callba
     set_interrupt(dev, false);
 
     // submit the real handler work
-    k_work_submit(&data->trigger_work);
+    k_work_submit_to_queue(&data->trigger_work_q, &data->trigger_work);
 }
 
 static void pmw3610_work_callback(struct k_work *work) {
@@ -815,6 +819,9 @@ static int pmw3610_init(const struct device *dev) {
 
     // init trigger handler work
     k_work_init(&data->trigger_work, pmw3610_work_callback);
+    k_work_queue_init(&data->trigger_work_q);
+    k_work_queue_start(&data->trigger_work_q, pmw3610_work_stack,
+                       K_THREAD_STACK_SIZEOF(pmw3610_work_stack), PMW3610_WORK_PRIORITY, NULL);
 
     // check readiness of cs gpio pin and init it to inactive
     if (!device_is_ready(config->cs_gpio.port)) {

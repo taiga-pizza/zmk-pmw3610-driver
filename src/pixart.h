@@ -7,6 +7,7 @@
  */
 
 #include <zephyr/device.h>
+#include <zephyr/kernel.h>
 #include <zephyr/drivers/spi.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/sensor.h>
@@ -34,6 +35,8 @@ struct pixart_data {
 
     // motion interrupt isr
     struct gpio_callback irq_gpio_cb;
+    // dedicated work queue so motion processing does not block the system WQ
+    struct k_work_q trigger_work_q;
     // the work structure holding the trigger job
     struct k_work trigger_work;
 
